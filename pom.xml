@@ -303,6 +303,23 @@
 					<version>3.5.0</version>
 				</plugin>
 				<plugin>
+					<groupId>org.codehaus.mojo</groupId>
+					<artifactId>license-maven-plugin</artifactId>
+					<version>1.16</version>
+					<executions>
+						<execution>
+							<id>download-licenses</id>
+							<configuration>
+								<excludedGroups>org.eclipse.californium</excludedGroups>
+								<excludedScopes>system,test</excludedScopes>
+							</configuration>
+							<goals>
+								<goal>download-licenses</goal>
+							</goals>
+						</execution>
+					</executions>
+				</plugin>
+				<plugin>
 					<artifactId>maven-javadoc-plugin</artifactId>
 					<version>3.0.0</version>
 					<executions>
@@ -361,7 +378,7 @@
 				<plugin>
 					<groupId>org.codehaus.mojo</groupId>
 					<artifactId>animal-sniffer-maven-plugin</artifactId>
-					<version>1.16</version>
+					<version>1.17</version>
 					<configuration>
 						<signature>
 							<groupId>net.sf.androidscents.signature</groupId>
@@ -416,6 +433,10 @@
 			</plugin>
 			<plugin>
 				<artifactId>maven-source-plugin</artifactId>
+			</plugin>
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>license-maven-plugin</artifactId>
 			</plugin>
 			<plugin>
 				<!-- 
