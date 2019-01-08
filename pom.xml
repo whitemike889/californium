@@ -313,9 +313,6 @@
 								<excludedGroups>org.eclipse.californium</excludedGroups>
 								<excludedScopes>system,test</excludedScopes>
 							</configuration>
-							<goals>
-								<goal>download-licenses</goal>
-							</goals>
 						</execution>
 					</executions>
 				</plugin>
