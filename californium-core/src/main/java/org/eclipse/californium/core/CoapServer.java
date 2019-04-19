@@ -31,7 +31,6 @@ import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -113,7 +112,10 @@ public class CoapServer implements ServerInterface {
 	private final List<Endpoint> endpoints;
 
 	/** The executor of the server for its endpoints (can be null). */
-	private ScheduledExecutorService executor;
+	private ScheduledExecutorService mainExecutor;
+
+	/** Scheduled executor intended to be used for rare executing timers (e.g. cleanup tasks). */
+	private ScheduledExecutorService timerExecutor;
 	/**
 	 * Indicate, it the server-specific executor service is detached, or
 	 * shutdown with this server.
@@ -179,39 +181,39 @@ public class CoapServer implements ServerInterface {
 	}
 
 	/**
-	 * Sets the executor service to use for running tasks in the protocol stage.
+	 * Set executor services to use for running tasks in the protocol stage.
 	 * 
-	 * @param executor The thread pool to use.
-	 * @throws IllegalStateException if this server is running and a new
-	 *             executor is provided.
-	 */
-	public void setExecutor(final ScheduledExecutorService executor) {
-		setExecutor(executor, false);
-	}
-
-	/**
-	 * Sets the executor service to use for running tasks in the protocol stage.
-	 * 
-	 * @param executor The thread pool to use.
+	 * @param mainExecutor executors used for main tasks
+	 * @param timerExecutor intended to be used for rare executing timers (e.g. cleanup tasks). 
 	 * @param detach {@code true}, if the executor is not shutdown on
 	 *            {@link #destroy()}, {@code false}, otherwise.
 	 * @throws IllegalStateException if this server is running and a new
 	 *             executor is provided.
 	 */
-	public synchronized void setExecutor(final ScheduledExecutorService executor, final boolean detach) {
-		if (this.executor != executor) {
-			if (running) {
-				throw new IllegalStateException("executor service can not be set on running server");
-			} else {
-				if (!this.detachExecutor && this.executor != null) {
-					this.executor.shutdownNow();
-				}
-				this.executor = executor;
-				this.detachExecutor = detach;
-				for (Endpoint ep : endpoints) {
-					ep.setExecutor(executor);
-				}
+	public synchronized void setExecutors(final ScheduledExecutorService mainExecutor, final ScheduledExecutorService timerExecutor,  final boolean detach) {
+		if (mainExecutor == null || timerExecutor == null) {
+			throw new IllegalArgumentException("executors must not be null");
+		}
+		if (this.mainExecutor == mainExecutor && this.timerExecutor == timerExecutor) {
+			return;
+		}
+		if (running) {
+			throw new IllegalStateException("executor service can not be set on running server");
+		}
+
+		if (!this.detachExecutor) {
+			if (this.mainExecutor != null) {
+				this.mainExecutor.shutdownNow();
 			}
+			if (this.timerExecutor != null) {
+				this.timerExecutor.shutdownNow();
+			}
+		}
+		this.mainExecutor = mainExecutor;
+		this.timerExecutor = timerExecutor;
+		this.detachExecutor = detach;
+		for (Endpoint ep : endpoints) {
+			ep.setExecutors(this.mainExecutor, this.timerExecutor);
 		}
 	}
 
@@ -229,11 +231,12 @@ public class CoapServer implements ServerInterface {
 
 		LOGGER.info("Starting server");
 
-		if (executor == null) {
-			// sets the central thread pool for the protocol stage over all endpoints
-			setExecutor(ExecutorsUtil.newScheduledThreadPool(//
-				this.config.getInt(NetworkConfig.Keys.PROTOCOL_STAGE_THREAD_COUNT), //
-				new NamedThreadFactory("CoapServer#"))); //$NON-NLS-1$
+		if (mainExecutor == null) {
+			// sets the central thread pool for the protocol stage over all
+			// endpoints
+			setExecutors(ExecutorsUtil.newScheduledThreadPool(//
+					this.config.getInt(NetworkConfig.Keys.PROTOCOL_STAGE_THREAD_COUNT), //
+					new NamedThreadFactory("CoapServer#")), ExecutorsUtil.newDefaultTimerScheduler(), false); //$NON-NLS-1$
 		}
 
 		if (endpoints.isEmpty()) {
@@ -289,32 +292,13 @@ public class CoapServer implements ServerInterface {
 		try {
 			if (!detachExecutor)
 				if (running) {
-					executor.shutdown(); // cannot be started again
-					try {
-						// wait for currently executing tasks to complete
-						if (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
-							// cancel still executing tasks
-							// and ignore all remaining tasks scheduled for
-							// later
-							List<Runnable> runningTasks = executor.shutdownNow();
-							if (runningTasks.size() > 0) {
-								// this is e.g. the case if we have performed an
-								// incomplete blockwise transfer
-								// and the BlockwiseLayer has scheduled a
-								// pending BlockCleanupTask for tidying up
-								LOGGER.debug("ignoring remaining {} scheduled task(s)", runningTasks.size());
-							}
-							// wait for executing tasks to respond to being
-							// cancelled
-							executor.awaitTermination(1, TimeUnit.SECONDS);
-						}
-					} catch (InterruptedException e) {
-						executor.shutdownNow();
-						Thread.currentThread().interrupt();
-					}
+					ExecutorsUtil.shutdownExecutorGracefully(2000, mainExecutor,timerExecutor);
 				} else {
-					if (executor !=null) {
-						executor.shutdownNow();
+					if (mainExecutor !=null) {
+						mainExecutor.shutdownNow();
+					}
+					if (timerExecutor != null) {
+						timerExecutor.shutdownNow();
 					}
 				}
 		} finally {
@@ -359,7 +343,7 @@ public class CoapServer implements ServerInterface {
 	@Override
 	public void addEndpoint(final Endpoint endpoint) {
 		endpoint.setMessageDeliverer(deliverer);
-		endpoint.setExecutor(executor);
+		endpoint.setExecutors(mainExecutor, timerExecutor);
 		endpoints.add(endpoint);
 	}
 

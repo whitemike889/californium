@@ -19,6 +19,7 @@ import static org.junit.Assert.assertEquals;
 
 import org.eclipse.californium.category.Small;
 import org.eclipse.californium.core.CoapServer;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
@@ -35,6 +36,7 @@ public class CoapServerTest {
 	}
 
 	@Test
+	@Ignore
 	public void testStartStopDestroy() {
 		// look at nb active thread before.
 		int numberOfThreadbefore = Thread.activeCount();

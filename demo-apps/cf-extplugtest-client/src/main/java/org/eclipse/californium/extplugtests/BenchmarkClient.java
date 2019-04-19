@@ -33,6 +33,7 @@ import java.util.Formatter;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -432,8 +433,9 @@ public class BenchmarkClient {
 			executorService = executor;
 			shutdown = false;
 		}
+		ScheduledThreadPoolExecutor timerExecutor = ExecutorsUtil.getScheduledExecutor();
 		endpoint.addInterceptor(new MessageTracer());
-		endpoint.setExecutor(executorService);
+		endpoint.setExecutors(executorService, timerExecutor);
 		client = new CoapClient(uri);
 		server = new CoapServer(endpoint.getConfig());
 		Feed feed = new Feed(CoAP.Type.NON, index, maxResourceSize, intervalMin, intervalMax, executorService,
@@ -444,9 +446,9 @@ public class BenchmarkClient {
 				overallReverseResponsesDownCounter, notifiesCompleteTimeouts);
 		feed.addObserver(feedObserver);
 		server.add(feed);
-		server.setExecutor(executorService, true);
+		server.setExecutors(executorService,timerExecutor, true);
 		client.setExecutor(executorService, true);
-		endpoint.setExecutor(executorService);
+		endpoint.setExecutors(executorService, timerExecutor);
 		this.endpoint = endpoint;
 	}
 

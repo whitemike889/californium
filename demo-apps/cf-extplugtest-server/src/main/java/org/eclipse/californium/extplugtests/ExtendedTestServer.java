@@ -140,7 +140,7 @@ public class ExtendedTestServer extends AbstractTestServer {
 					new NamedThreadFactory("CoapServer#")); //$NON-NLS-1$
 
 			ExtendedTestServer server = new ExtendedTestServer(config, protocolConfig, noBenchmark);
-			server.setExecutor(executor);
+			server.setExecutors(executor, ExecutorsUtil.newDefaultTimerScheduler(), false);
 			server.add(new ReverseRequest(config, executor));
 			ReverseObserve reverseObserver = new ReverseObserve(config, executor);
 			server.add(reverseObserver);

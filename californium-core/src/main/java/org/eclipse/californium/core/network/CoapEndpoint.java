@@ -217,8 +217,14 @@ public class CoapEndpoint implements Endpoint {
 	/** Parser to convert datagrams to messages. */
 	private final DataParser parser;
 
+	/** Store containing data about exchanged message. */
+	private final MessageExchangeStore exchangeStore;
+
 	/** The executor to run tasks for this endpoint and its layers */
-	private ExecutorService executor;
+	private ExecutorService mainExecutor;
+
+	/** Scheduled executor intended to be used for rare executing timers (e.g. cleanup tasks). */
+	private ScheduledExecutorService timerExecutor;
 
 	/** Indicates if the endpoint has been started */
 	private boolean started;
@@ -302,7 +308,7 @@ public class CoapEndpoint implements Endpoint {
 		if (coapStackFactory == null) {
 			coapStackFactory = getDefaultCoapStackFactory();
 		}
-		MessageExchangeStore localExchangeStore = (null != exchangeStore) ? exchangeStore
+		this.exchangeStore = (null != exchangeStore) ? exchangeStore
 				: new InMemoryMessageExchangeStore(config, tokenGenerator);
 		ObservationStore observationStore = (null != store) ? store : new InMemoryObservationStore(config);
 		if (null == endpointContextMatcher) {
@@ -328,7 +334,7 @@ public class CoapEndpoint implements Endpoint {
 
 			@Override
 			public void execute(Runnable command) {
-				final Executor exchangeExecutor = executor;
+				final Executor exchangeExecutor = mainExecutor;
 				if (exchangeExecutor == null) {
 					LOGGER.error("Executor not ready for exchanges!",
 							new Throwable("exchange execution failed!"));
@@ -345,12 +351,12 @@ public class CoapEndpoint implements Endpoint {
 
 		if (CoAP.isTcpProtocol(connector.getProtocol())) {
 			this.matcher = new TcpMatcher(config, new NotificationDispatcher(), tokenGenerator, observationStore,
-					localExchangeStore, exchangeExecutionHandler, endpointContextMatcher);
+					this.exchangeStore, exchangeExecutionHandler, endpointContextMatcher);
 			this.serializer = new TcpDataSerializer();
 			this.parser = new TcpDataParser();
 		} else {
 			this.matcher = new UdpMatcher(config, new NotificationDispatcher(), tokenGenerator, observationStore,
-					localExchangeStore, exchangeExecutionHandler, endpointContextMatcher);
+					this.exchangeStore, exchangeExecutionHandler, endpointContextMatcher);
 			this.serializer = new UdpDataSerializer();
 			this.parser = new UdpDataParser();
 		}
@@ -367,13 +373,13 @@ public class CoapEndpoint implements Endpoint {
 			setMessageDeliverer(new ClientMessageDeliverer());
 		}
 
-		if (this.executor == null) {
+		if (this.mainExecutor == null) {
 			LOGGER.info("Endpoint [{}] requires an executor to start, using default single-threaded daemon executor", getUri());
 
 			// in production environments the executor should be set to a multi threaded version
 			// in order to utilize all cores of the processor
-			setExecutor(ExecutorsUtil.newSingleThreadScheduledExecutor(
-					new DaemonThreadFactory("CoapEndpoint-" + connector + '#'))); //$NON-NLS-1$
+			setExecutors(ExecutorsUtil.newSingleThreadScheduledExecutor(
+					new DaemonThreadFactory("CoapEndpoint-" + connector + '#')), null); //$NON-NLS-1$
 			addObserver(new EndpointObserver() {
 
 				@Override
@@ -388,7 +394,7 @@ public class CoapEndpoint implements Endpoint {
 
 				@Override
 				public void destroyed(final Endpoint endpoint) {
-					executor.shutdown();
+					mainExecutor.shutdown();
 				}
 			});
 		}
@@ -449,14 +455,17 @@ public class CoapEndpoint implements Endpoint {
 	}
 
 	@Override
-	public synchronized void setExecutor(final ScheduledExecutorService executor) {
-		if (this.executor != executor) {
-			if (started) {
-				throw new IllegalStateException("endpoint already started!");
-			}
-			this.executor = executor;
-			this.coapstack.setExecutor(executor);
+	public void setExecutors(ScheduledExecutorService mainExecutor, ScheduledExecutorService timerExecutor) {
+		if (this.mainExecutor == mainExecutor && this.timerExecutor == timerExecutor) {
+			return;
 		}
+		if (started) {
+			throw new IllegalStateException("endpoint already started!");
+		}
+		this.mainExecutor = mainExecutor;
+		this.timerExecutor = timerExecutor != null ? timerExecutor : mainExecutor;
+		this.coapstack.setExecutor(mainExecutor);
+		this.exchangeStore.setExecutor(timerExecutor);
 	}
 
 	@Override
@@ -527,7 +536,7 @@ public class CoapEndpoint implements Endpoint {
 			return;
 		}
 
-		final Exchange exchange = new Exchange(request, Origin.LOCAL, executor);
+		final Exchange exchange = new Exchange(request, Origin.LOCAL, mainExecutor);
 		exchange.execute(new Runnable() {
 
 			@Override
@@ -1009,7 +1018,7 @@ public class CoapEndpoint implements Endpoint {
 	 */
 	private void runInProtocolStage(final Runnable task) {
 		try {
-			executor.execute(new Runnable() {
+			mainExecutor.execute(new Runnable() {
 
 				@Override
 				public void run() {
